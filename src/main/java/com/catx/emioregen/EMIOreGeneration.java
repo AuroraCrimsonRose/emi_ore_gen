@@ -1,18 +1,19 @@
 package com.catx.emioregen;
 
-import com.catx.emioregen.client.ClientOreCache;
-import com.catx.emioregen.data.OreEntryData;
+import com.catx.emioregen.data.OreEntry;
 import com.catx.emioregen.network.OreDataPayload;
-import com.catx.emioregen.server.OreExtractor;
+import com.catx.emioregen.server.WorldGenIndexer;
 import com.mojang.logging.LogUtils;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
+import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
@@ -23,45 +24,72 @@ import java.util.List;
 
 @Mod(EMIOreGeneration.MODID)
 public class EMIOreGeneration {
+
     public static final String MODID = "emioregeneration";
     public static final Logger LOGGER = LogUtils.getLogger();
 
-    public static final List<OreEntryData> EXTRACTED_ORES = new ArrayList<>();
+    /** Server-side index, rebuilt on server start. Empty on a client that has not joined a world. */
+    private static final List<OreEntry> INDEX = new ArrayList<>();
 
     public EMIOreGeneration(IEventBus modEventBus, ModContainer modContainer) {
         modEventBus.addListener(this::registerPayloads);
+
         NeoForge.EVENT_BUS.addListener(this::onServerStarted);
+        NeoForge.EVENT_BUS.addListener(this::onServerStopped);
         NeoForge.EVENT_BUS.addListener(this::onPlayerJoin);
+
+        modContainer.registerConfig(ModConfig.Type.COMMON, Config.SPEC);
     }
 
     private void registerPayloads(RegisterPayloadHandlersEvent event) {
-        final PayloadRegistrar registrar = event.registrar(MODID);
+        PayloadRegistrar registrar = event.registrar(MODID).optional();
         registrar.playToClient(
                 OreDataPayload.TYPE,
                 OreDataPayload.STREAM_CODEC,
-                (payload, context) -> {
-                    context.enqueueWork(() -> {
-                        ClientOreCache.update(payload.oreEntries());
-                        LOGGER.info("Client cached {} ores for EMI!", payload.oreEntries().size());
-
-                        if (net.neoforged.fml.loading.FMLEnvironment.dist.isClient()) {
-                            dev.emi.emi.runtime.EmiReloadManager.reload();
-                        }
-                    });
-                }
-        );
+                (payload, context) -> context.enqueueWork(() -> ClientPayloadHandler.accept(payload)));
     }
 
     private void onServerStarted(ServerStartedEvent event) {
-        EXTRACTED_ORES.clear();
-        EXTRACTED_ORES.addAll(OreExtractor.extractAll(event.getServer()));
-        LOGGER.info("Successfully extracted {} ore entries.", EXTRACTED_ORES.size());
+        long start = System.nanoTime();
+
+        INDEX.clear();
+        INDEX.addAll(WorldGenIndexer.index(event.getServer()));
+
+        long millis = (System.nanoTime() - start) / 1_000_000L;
+        LOGGER.info("Indexed {} ore occurrences in {} ms", INDEX.size(), millis);
+
+        if (INDEX.isEmpty()) {
+            LOGGER.warn("No ore occurrences found. Nothing will show up in EMI's ore generation tab.");
+        }
+    }
+
+    private void onServerStopped(ServerStoppedEvent event) {
+        INDEX.clear();
     }
 
     private void onPlayerJoin(PlayerEvent.PlayerLoggedInEvent event) {
-        if (event.getEntity() instanceof ServerPlayer serverPlayer) {
-            PacketDistributor.sendToPlayer(serverPlayer, new OreDataPayload(new ArrayList<>(EXTRACTED_ORES)));
+        if (!(event.getEntity() instanceof ServerPlayer serverPlayer)) {
+            return;
         }
+        if (INDEX.isEmpty()) {
+            return;
+        }
+
+        OreDataPayload payload = new OreDataPayload(List.copyOf(INDEX));
+
+        // NeoForge rejects custom payloads over ~1 MiB, and a heavily modded pack can get close,
+        // so this is checked rather than assumed. Failing here is far easier to diagnose than a
+        // disconnect during login.
+        int bytes = payload.estimateCompressedBytes();
+        if (bytes > 900_000) {
+            LOGGER.error("Ore index is {} KiB compressed, too large to send. Skipping sync for {}.",
+                    bytes / 1024, serverPlayer.getGameProfile().getName());
+            return;
+        }
+
+        LOGGER.debug("Sending {} ore occurrences ({} KiB) to {}",
+                INDEX.size(), bytes / 1024, serverPlayer.getGameProfile().getName());
+        PacketDistributor.sendToPlayer(serverPlayer, payload);
     }
 
     public static ResourceLocation id(String path) {
