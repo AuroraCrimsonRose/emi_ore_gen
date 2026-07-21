@@ -1,0 +1,13 @@
+{
+  "itemGroup.emioregeneration": "Example Mod Tab",
+  "block.emioregeneration.example_block": "Example Block",
+  "item.emioregeneration.example_item": "Example Item",
+
+  "emioregeneration.configuration.title": "EMI Ore Generation Configs",
+  "emioregeneration.configuration.section.emioregeneration.common.toml": "EMI Ore Generation Configs",
+  "emioregeneration.configuration.section.emioregeneration.common.toml.title": "EMI Ore Generation Configs",
+  "emioregeneration.configuration.items": "Item List",
+  "emioregeneration.configuration.logDirtBlock": "Log Dirt Block",
+  "emioregeneration.configuration.magicNumberIntroduction": "Magic Number Text",
+  "emioregeneration.configuration.magicNumber": "Magic Number"
+}
