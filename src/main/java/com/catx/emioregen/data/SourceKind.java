@@ -11,7 +11,13 @@ public enum SourceKind {
     /** A GregTech CEu bedrock fluid reservoir, tapped by the Fluid Rig. */
     GT_BEDROCK_FLUID("gt_bedrock_fluid"),
     /** A GregTech CEu surface rock, scattered above the vein it advertises. */
-    GT_SURFACE_ROCK("gt_surface_rock");
+    GT_SURFACE_ROCK("gt_surface_rock"),
+    /** An Immersive Petroleum underground reservoir, tapped by a pumpjack. */
+    IP_RESERVOIR("ip_reservoir"),
+    /** An Immersive Engineering mineral deposit, worked by an excavator. */
+    IE_MINERAL("ie_mineral"),
+    /** A fluid deposit placed by a worldgen feature, such as TFMG's oil. */
+    FLUID_DEPOSIT("fluid_deposit");
 
     private final String key;
 

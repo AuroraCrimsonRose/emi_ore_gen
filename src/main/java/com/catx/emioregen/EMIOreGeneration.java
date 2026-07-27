@@ -28,6 +28,9 @@ public class EMIOreGeneration {
     public static final String MODID = "emioregeneration";
     public static final Logger LOGGER = LogUtils.getLogger();
 
+    /** NeoForge caps a custom payload at roughly 1 MiB; this leaves headroom for framing. */
+    private static final int PAYLOAD_LIMIT_BYTES = 900_000;
+
     /** Server-side index, rebuilt on server start. Empty on a client that has not joined a world. */
     private static final List<OreEntry> INDEX = new ArrayList<>();
 
@@ -81,10 +84,24 @@ public class EMIOreGeneration {
         // so this is checked rather than assumed. Failing here is far easier to diagnose than a
         // disconnect during login.
         int bytes = payload.estimateCompressedBytes();
-        if (bytes > 900_000) {
-            LOGGER.error("Ore index is {} KiB compressed, too large to send. Skipping sync for {}.",
-                    bytes / 1024, serverPlayer.getGameProfile().getName());
-            return;
+        if (bytes > PAYLOAD_LIMIT_BYTES) {
+            // Biome lists are almost all of the weight in a big pack. Dropping them costs the
+            // biome cycler but keeps every ore, depth and rarity, which is the bulk of the value.
+            LOGGER.warn("Ore index is {} KiB compressed; dropping biome detail to fit the packet",
+                    bytes / 1024);
+
+            List<OreEntry> stripped = new ArrayList<>(INDEX.size());
+            for (OreEntry entry : INDEX) {
+                stripped.add(entry.withoutBiomes());
+            }
+            payload = new OreDataPayload(stripped);
+            bytes = payload.estimateCompressedBytes();
+
+            if (bytes > PAYLOAD_LIMIT_BYTES) {
+                LOGGER.error("Ore index is still {} KiB after stripping biomes. Skipping sync for {}.",
+                        bytes / 1024, serverPlayer.getGameProfile().getName());
+                return;
+            }
         }
 
         LOGGER.debug("Sending {} ore occurrences ({} KiB) to {}",

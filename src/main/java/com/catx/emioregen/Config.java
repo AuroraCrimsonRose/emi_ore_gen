@@ -24,10 +24,25 @@ public final class Config {
             .comment("Show the GregTech surface rock that marks a vein, next to that vein's entry.")
             .define("showSurfaceIndicators", true);
 
+    public static final ModConfigSpec.BooleanValue INCLUDE_IMMERSIVE_ENGINEERING = BUILDER
+            .comment("Index Immersive Engineering excavator mineral deposits.")
+            .define("includeImmersiveEngineering", true);
+
+    public static final ModConfigSpec.BooleanValue INCLUDE_IMMERSIVE_PETROLEUM = BUILDER
+            .comment("Index Immersive Petroleum underground fluid reservoirs.")
+            .define("includeImmersivePetroleum", true);
+
     public static final ModConfigSpec.BooleanValue OWN_VEIN_DIAGRAM = BUILDER
             .comment("Show ore veins using this mod's own diagram, styled to match its other",
                     "pages, and hide GregTech's. Turn this off to keep GregTech's version.")
             .define("useOwnVeinDiagram", true);
+
+    public static final ModConfigSpec.IntValue BIOME_COVERAGE_THRESHOLD = BUILDER
+            .comment("Percentage of a dimension's biomes an ore must cover before it is treated",
+                    "as generating everywhere. Packs like Terralith add hundreds of biomes, and",
+                    "listing 599 of 600 individually costs a lot and tells a player nothing.",
+                    "Raise it to 100 to list biomes exactly as worldgen reports them.")
+            .defineInRange("biomeCoverageThreshold", 90, 50, 100);
 
     public static final ModConfigSpec.IntValue MAX_ENTRIES_PER_PAGE = BUILDER
             .comment("How many separate occurrences to list at once before paging.")

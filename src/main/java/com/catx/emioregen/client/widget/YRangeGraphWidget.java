@@ -66,7 +66,8 @@ public class YRangeGraphWidget extends Widget {
 
         // Bedrock reservoirs and surface rocks have no depth to plot, so a depth axis would be
         // a flat line saying nothing. Show how common each one is instead.
-        boolean anyDepth = list.stream().anyMatch(entry -> !entry.isFluid() && !entry.isSurface());
+        boolean anyDepth = list.stream().anyMatch(entry ->
+                !entry.isFluid() && !entry.isSurface() && entry.sizeBlocks() >= 0);
         if (!list.isEmpty() && (shareMode || !anyDepth)) {
             renderProportions(graphics, list);
             return;

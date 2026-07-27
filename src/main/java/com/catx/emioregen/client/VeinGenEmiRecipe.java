@@ -194,8 +194,7 @@ public class VeinGenEmiRecipe implements EmiRecipe {
             if (any.sizeClass() != SizeClass.UNKNOWN) {
                 parts.add(Component.translatable(any.sizeClass().translationKey()).getString());
             }
-            parts.add(Component.translatable("emioregeneration.ui.of_chunks",
-                    RegionGenEmiRecipe.percent(any.spawnPermille())).getString());
+            parts.add(RegionGenEmiRecipe.percent(any.spawnPermille()));
             parts.add(RegionGenEmiRecipe.depthLabel(any));
 
             Font font = Minecraft.getInstance().font;

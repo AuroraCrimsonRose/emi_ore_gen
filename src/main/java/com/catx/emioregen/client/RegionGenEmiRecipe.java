@@ -4,6 +4,7 @@ import com.catx.emioregen.Config;
 import com.catx.emioregen.client.widget.CycleArrowWidget;
 import com.catx.emioregen.data.OreEntry;
 import com.catx.emioregen.data.SizeClass;
+import com.catx.emioregen.data.SourceKind;
 import dev.emi.emi.api.recipe.EmiRecipe;
 import dev.emi.emi.api.recipe.EmiRecipeCategory;
 import dev.emi.emi.api.stack.EmiIngredient;
@@ -232,9 +233,15 @@ public class RegionGenEmiRecipe implements EmiRecipe {
     // Shared formatting, also used by the ore page
     // ------------------------------------------------------------------
 
-    static String depthLabel(OreEntry entry) {
+    public static String depthLabel(OreEntry entry) {
         if (entry.isSurface()) {
             return Component.translatable("emioregeneration.ui.surface").getString();
+        }
+        if (entry.kind() == SourceKind.IP_RESERVOIR) {
+            return Component.translatable("emioregeneration.ui.reservoir").getString();
+        }
+        if (entry.kind() == SourceKind.IE_MINERAL) {
+            return Component.translatable("emioregeneration.ui.deposit").getString();
         }
         if (entry.isFluid()) {
             return Component.translatable("emioregeneration.ui.bedrock_layer").getString();
@@ -243,7 +250,7 @@ public class RegionGenEmiRecipe implements EmiRecipe {
                 entry.minY(), entry.maxY()).getString();
     }
 
-    static String percent(int permille) {
+    public static String percent(int permille) {
         if (permille <= 0) {
             return "0%";
         }

@@ -55,6 +55,24 @@ public final class WorldGenIndexer {
     public static List<OreEntry> index(MinecraftServer server) {
         List<OreEntry> results = new ArrayList<>(indexFeatures(server));
 
+        if (ModList.get().isLoaded("immersiveengineering") && Config.INCLUDE_IMMERSIVE_ENGINEERING.get()) {
+            try {
+                results.addAll(ImmersiveEngineeringCompat.extract(server));
+            } catch (Throwable t) {
+                EMIOreGeneration.LOGGER.error(
+                        "Immersive Engineering mineral extraction failed; those entries will be missing", t);
+            }
+        }
+
+        if (ModList.get().isLoaded("immersivepetroleum") && Config.INCLUDE_IMMERSIVE_PETROLEUM.get()) {
+            try {
+                results.addAll(ImmersivePetroleumCompat.extract(server));
+            } catch (Throwable t) {
+                EMIOreGeneration.LOGGER.error(
+                        "Immersive Petroleum reservoir extraction failed; those entries will be missing", t);
+            }
+        }
+
         if (ModList.get().isLoaded("gtceu") && Config.INCLUDE_GREGTECH.get()) {
             try {
                 results.addAll(GregTechCompat.extract(server));
@@ -64,7 +82,27 @@ public final class WorldGenIndexer {
             }
         }
 
+        warnAboutUnreadableMods();
+
         return resolveDrops(server, results);
+    }
+
+    /**
+     * Names mods whose worldgen this cannot see, so a wrong-looking page has an explanation.
+     *
+     * <p>Large Ore Deposits is the awkward case: its own deposits live in its config files with
+     * nothing in any registry to read, and it mixes into {@code ConfiguredFeature} to rewrite or
+     * disable vanilla ore generation. The rewriting is fine, because this mod reads the live
+     * registries and therefore sees the result rather than the original. The deposits are simply
+     * invisible.</p>
+     */
+    private static void warnAboutUnreadableMods() {
+        if (ModList.get().isLoaded("adlods")) {
+            EMIOreGeneration.LOGGER.info(
+                    "Large Ore Deposits is present. Its own deposits are configured outside any "
+                            + "registry and cannot be indexed; vanilla ores it modifies are read "
+                            + "after modification and should be accurate.");
+        }
     }
 
     // ------------------------------------------------------------------
@@ -128,6 +166,8 @@ public final class WorldGenIndexer {
     private static List<OreEntry> indexFeatures(MinecraftServer server) {
         Registry<LevelStem> stems = server.registryAccess().registryOrThrow(Registries.LEVEL_STEM);
         Registry<PlacedFeature> placedFeatures = server.registryAccess().registryOrThrow(Registries.PLACED_FEATURE);
+        Registry<ConfiguredFeature<?, ?>> configuredFeatures =
+                server.registryAccess().registryOrThrow(Registries.CONFIGURED_FEATURE);
         RegistryOps<JsonElement> ops = server.registryAccess().createSerializationContext(JsonOps.INSTANCE);
 
         // Keyed by dimension + feature + block so the same feature across many biomes collapses
@@ -136,35 +176,14 @@ public final class WorldGenIndexer {
 
         for (Map.Entry<ResourceKey<LevelStem>, LevelStem> stemEntry : stems.entrySet()) {
             String dimensionId = stemEntry.getKey().location().toString();
-            LevelStem stem = stemEntry.getValue();
 
-            int worldMinY = stem.type().value().minY();
-            int worldMaxY = worldMinY + stem.type().value().height();
-
-            Set<Holder<Biome>> possibleBiomes = stem.generator().getBiomeSource().possibleBiomes();
-            int biomeCount = possibleBiomes.size();
-
-            for (Holder<Biome> biomeHolder : possibleBiomes) {
-                String biomeId = biomeHolder.unwrapKey()
-                        .map(k -> k.location().toString())
-                        .orElse("unknown");
-
-                for (HolderSet<PlacedFeature> step : biomeHolder.value().getGenerationSettings().features()) {
-                    for (Holder<PlacedFeature> featureHolder : step) {
-                        PlacedFeature placed = featureHolder.value();
-
-                        ResourceLocation featureId = placedFeatures.getKey(placed);
-                        String sourceId = featureId != null ? featureId.toString() : "inline";
-
-                        Placement placement = readPlacement(placed, ops, worldMinY, worldMaxY);
-
-                        // ConfiguredFeature#getFeatures flattens nested selectors, so ores hidden
-                        // inside random_selector / random_boolean_selector are still found.
-                        placed.feature().value().getFeatures().forEach(configured ->
-                                collectOres(configured, aggregates, dimensionId, biomeId, biomeCount,
-                                        sourceId, placement, worldMinY, worldMaxY));
-                    }
-                }
+            // A single broken dimension should cost that dimension, not the whole index.
+            try {
+                indexDimension(stemEntry.getValue(), dimensionId, placedFeatures,
+                        configuredFeatures, ops, aggregates);
+            } catch (Throwable t) {
+                EMIOreGeneration.LOGGER.warn("Skipping dimension {}: its worldgen could not be read",
+                        dimensionId, t);
             }
         }
 
@@ -175,7 +194,67 @@ public final class WorldGenIndexer {
         return out;
     }
 
+    private static void indexDimension(LevelStem stem, String dimensionId,
+                                       Registry<PlacedFeature> placedFeatures,
+                                       Registry<ConfiguredFeature<?, ?>> configuredFeatures,
+                                       RegistryOps<JsonElement> ops,
+                                       Map<String, Aggregate> aggregates) {
+        int worldMinY = stem.type().value().minY();
+        int worldMaxY = worldMinY + stem.type().value().height();
+
+        Set<Holder<Biome>> possibleBiomes = stem.generator().getBiomeSource().possibleBiomes();
+        int biomeCount = possibleBiomes.size();
+
+        for (Holder<Biome> biomeHolder : possibleBiomes) {
+            String biomeId = biomeHolder.unwrapKey()
+                    .map(k -> k.location().toString())
+                    .orElse("unknown");
+
+            try {
+                for (HolderSet<PlacedFeature> step : biomeHolder.value().getGenerationSettings().features()) {
+                    for (Holder<PlacedFeature> featureHolder : step) {
+                        indexFeature(featureHolder, placedFeatures, configuredFeatures, ops,
+                                aggregates, dimensionId, biomeId, biomeCount, worldMinY, worldMaxY);
+                    }
+                }
+            } catch (Throwable t) {
+                // Unbound holders and malformed generation settings both land here.
+                EMIOreGeneration.LOGGER.debug("Skipping biome {} in {}", biomeId, dimensionId, t);
+            }
+        }
+    }
+
+    private static void indexFeature(Holder<PlacedFeature> featureHolder,
+                                     Registry<PlacedFeature> placedFeatures,
+                                     Registry<ConfiguredFeature<?, ?>> configuredFeatures,
+                                     RegistryOps<JsonElement> ops,
+                                     Map<String, Aggregate> aggregates,
+                                     String dimensionId, String biomeId, int biomeCount,
+                                     int worldMinY, int worldMaxY) {
+        try {
+            PlacedFeature placed = featureHolder.value();
+
+            ResourceLocation featureId = placedFeatures.getKey(placed);
+            String sourceId = featureId != null ? featureId.toString() : "inline";
+
+            Placement placement = readPlacement(placed, ops, worldMinY, worldMaxY);
+
+            // ConfiguredFeature#getFeatures flattens nested selectors, so ores hidden inside
+            // random_selector / random_boolean_selector are still found. A mod with a feature
+            // that references itself would recurse forever here, hence catching Throwable
+            // rather than Exception: that arrives as a StackOverflowError.
+            placed.feature().value().getFeatures().forEach(configured ->
+                    collectOres(configured, configuredFeatures, ops, aggregates, dimensionId,
+                            biomeId, biomeCount, sourceId, placement, worldMinY, worldMaxY));
+        } catch (Throwable t) {
+            EMIOreGeneration.LOGGER.debug("Skipping an unreadable feature in {} / {}",
+                    dimensionId, biomeId, t);
+        }
+    }
+
     private static void collectOres(ConfiguredFeature<?, ?> configured,
+                                    Registry<ConfiguredFeature<?, ?>> configuredFeatures,
+                                    RegistryOps<JsonElement> ops,
                                     Map<String, Aggregate> aggregates,
                                     String dimensionId,
                                     String biomeId,
@@ -185,6 +264,8 @@ public final class WorldGenIndexer {
                                     int worldMinY,
                                     int worldMaxY) {
         if (!(configured.config() instanceof OreConfiguration oreConfig) || oreConfig.targetStates.isEmpty()) {
+            collectForeignOres(configured, configuredFeatures, ops, aggregates, dimensionId,
+                    biomeId, dimensionBiomeCount, sourceId, placement, worldMinY, worldMaxY);
             return;
         }
 
@@ -205,6 +286,198 @@ public final class WorldGenIndexer {
                     dimensionBiomeCount));
             agg.biomes.add(biomeId);
         }
+    }
+
+    /**
+     * Ores hiding inside a mod's own feature type.
+     *
+     * <p>Plenty of mods define their own feature rather than using {@code minecraft:ore}, and
+     * their config is usually a record rather than a subclass of {@link OreConfiguration}, so an
+     * {@code instanceof} check misses them entirely. Mekanism, Immersive Engineering and Create
+     * all do this, and between them that is most of a tech pack's ores.</p>
+     *
+     * <p>What they do share is the serialised shape: a {@code targets} list of
+     * {@code {"state": {"Name": ...}}}, because they are all wrapping the same vanilla idea. So
+     * rather than writing an extractor per mod, the feature is encoded through its own codec and
+     * the result read for that shape. A mod released tomorrow gets picked up for free.</p>
+     *
+     * <p>The catch is that trees and decoration serialise block states too, so a match only
+     * counts if the block is tagged as an ore or is named like one.</p>
+     */
+    private static void collectForeignOres(ConfiguredFeature<?, ?> configured,
+                                           Registry<ConfiguredFeature<?, ?>> configuredFeatures,
+                                           RegistryOps<JsonElement> ops,
+                                           Map<String, Aggregate> aggregates,
+                                           String dimensionId, String biomeId,
+                                           int dimensionBiomeCount, String sourceId,
+                                           Placement placement, int worldMinY, int worldMaxY) {
+        JsonElement encoded;
+        try {
+            encoded = ConfiguredFeature.DIRECT_CODEC.encodeStart(ops, configured).result().orElse(null);
+        } catch (Exception e) {
+            return;
+        }
+        if (encoded == null) {
+            return;
+        }
+
+        Set<String> blockIds = new LinkedHashSet<>();
+        scanForTargets(encoded, blockIds, configuredFeatures, ops, new LinkedHashSet<>(), 0);
+
+        if (blockIds.isEmpty()) {
+            // Nothing serialised at all. A few features decide their contents in Java, so fall
+            // back to the table, which still gets real rarity and depth from the placement.
+            List<String> known = OpaqueFeatures.yieldsOf(sourceId);
+            for (String resourceId : known) {
+                String key = dimensionId + '|' + sourceId + '|' + resourceId;
+                Aggregate agg = aggregates.computeIfAbsent(key, k -> new Aggregate(
+                        resourceId, sourceId, SourceKind.FLUID_DEPOSIT, dimensionId,
+                        placement.minY, placement.maxY, placement.meanY,
+                        worldMinY, worldMaxY,
+                        -1, placement.spawnPermille, dimensionBiomeCount));
+                agg.biomes.add(biomeId);
+            }
+            return;
+        }
+
+        int size = scanForSize(encoded, 0);
+
+        for (String blockId : blockIds) {
+            ResourceLocation location = ResourceLocation.tryParse(blockId);
+            if (location == null || !BuiltInRegistries.BLOCK.containsKey(location)) {
+                continue;
+            }
+            if (!looksLikeOre(location)) {
+                continue;
+            }
+
+            String key = dimensionId + '|' + sourceId + '|' + blockId;
+            Aggregate agg = aggregates.computeIfAbsent(key, k -> new Aggregate(
+                    blockId, sourceId, dimensionId,
+                    placement.minY, placement.maxY, placement.meanY,
+                    worldMinY, worldMaxY,
+                    size, placement.spawnPermille, dimensionBiomeCount));
+            agg.biomes.add(biomeId);
+        }
+    }
+
+    /**
+     * Collects every {@code targets[].state.Name} anywhere in the tree, following references.
+     *
+     * <p>Wrapper features are the reason for the reference following. Libraries like
+     * Lithostitched let a pack say "one of these features, weighted", and the nested entries are
+     * serialised as ids rather than inline. None of those wrappers override
+     * {@code Feature#getFeatures}, so vanilla's flattening cannot see through them either, and an
+     * ore behind one would simply not exist as far as this mod is concerned. Resolving the id
+     * against the registry and carrying on handles every wrapper the same way, including ones
+     * that do not exist yet.</p>
+     *
+     * <p>The visited set is not an optimisation: a pack can define two features that reference
+     * each other, and without it that is an infinite loop during world load.</p>
+     */
+    private static void scanForTargets(JsonElement element, Set<String> out,
+                                       Registry<ConfiguredFeature<?, ?>> configuredFeatures,
+                                       RegistryOps<JsonElement> ops,
+                                       Set<String> visited, int depth) {
+        if (depth > 12 || element == null) {
+            return;
+        }
+        if (element.isJsonArray()) {
+            element.getAsJsonArray().forEach(child ->
+                    scanForTargets(child, out, configuredFeatures, ops, visited, depth + 1));
+            return;
+        }
+        if (!element.isJsonObject()) {
+            return;
+        }
+
+        JsonObject obj = element.getAsJsonObject();
+
+        if (obj.has("state") && obj.get("state").isJsonObject()) {
+            JsonObject state = obj.getAsJsonObject("state");
+            if (state.has("Name") && state.get("Name").isJsonPrimitive()) {
+                out.add(state.get("Name").getAsString());
+            }
+        }
+
+        if (obj.has("feature") && obj.get("feature").isJsonPrimitive()) {
+            follow(obj.get("feature").getAsString(), out, configuredFeatures, ops, visited, depth);
+        }
+
+        obj.entrySet().forEach(entry ->
+                scanForTargets(entry.getValue(), out, configuredFeatures, ops, visited, depth + 1));
+    }
+
+    private static void follow(String featureId, Set<String> out,
+                               Registry<ConfiguredFeature<?, ?>> configuredFeatures,
+                               RegistryOps<JsonElement> ops, Set<String> visited, int depth) {
+        if (!visited.add(featureId)) {
+            return;
+        }
+        ResourceLocation location = ResourceLocation.tryParse(featureId);
+        if (location == null) {
+            return;
+        }
+        ConfiguredFeature<?, ?> nested = configuredFeatures.get(location);
+        if (nested == null) {
+            return;
+        }
+        try {
+            JsonElement encoded = ConfiguredFeature.DIRECT_CODEC
+                    .encodeStart(ops, nested).result().orElse(null);
+            if (encoded != null) {
+                scanForTargets(encoded, out, configuredFeatures, ops, visited, depth + 1);
+            }
+        } catch (Exception ignored) {
+            // A feature that will not serialise simply contributes nothing.
+        }
+    }
+
+    private static int scanForSize(JsonElement element, int depth) {
+        if (depth > 12 || element == null || !element.isJsonObject()) {
+            return -1;
+        }
+        JsonObject obj = element.getAsJsonObject();
+        for (String field : new String[] {"size", "max_size", "vein_size"}) {
+            if (obj.has(field) && obj.get(field).isJsonPrimitive()) {
+                try {
+                    return obj.get(field).getAsInt();
+                } catch (Exception ignored) {
+                    // Some mods make these value providers; fall through to the nested search.
+                }
+            }
+        }
+        for (Map.Entry<String, JsonElement> entry : obj.entrySet()) {
+            int found = scanForSize(entry.getValue(), depth + 1);
+            if (found >= 0) {
+                return found;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Whether a block is plausibly an ore rather than scenery.
+     *
+     * <p>Tags first, because that is what the block itself claims to be. The name check is a
+     * fallback for ores whose mod never tagged them, which is common enough to be worth it.</p>
+     */
+    private static boolean looksLikeOre(ResourceLocation location) {
+        try {
+            boolean tagged = BuiltInRegistries.BLOCK.getHolder(
+                            ResourceKey.create(Registries.BLOCK, location))
+                    .map(holder -> holder.tags().anyMatch(tag ->
+                            tag.location().getPath().startsWith("ores/")
+                                    || tag.location().getPath().equals("ores")))
+                    .orElse(false);
+            if (tagged) {
+                return true;
+            }
+        } catch (Exception ignored) {
+            // Fall through to the name check.
+        }
+        String path = location.getPath();
+        return path.endsWith("_ore") || path.startsWith("ore_") || path.contains("_ore_");
     }
 
     // ------------------------------------------------------------------
@@ -334,6 +607,7 @@ public final class WorldGenIndexer {
     private static final class Aggregate {
         private final String blockId;
         private final String sourceId;
+        private final SourceKind kind;
         private final String dimensionId;
         private final int minY;
         private final int maxY;
@@ -348,8 +622,16 @@ public final class WorldGenIndexer {
         private Aggregate(String blockId, String sourceId, String dimensionId,
                           int minY, int maxY, int meanY, int worldMinY, int worldMaxY,
                           int sizeBlocks, int spawnPermille, int dimensionBiomeCount) {
+            this(blockId, sourceId, SourceKind.FEATURE, dimensionId, minY, maxY, meanY,
+                    worldMinY, worldMaxY, sizeBlocks, spawnPermille, dimensionBiomeCount);
+        }
+
+        private Aggregate(String blockId, String sourceId, SourceKind kind, String dimensionId,
+                          int minY, int maxY, int meanY, int worldMinY, int worldMaxY,
+                          int sizeBlocks, int spawnPermille, int dimensionBiomeCount) {
             this.blockId = blockId;
             this.sourceId = sourceId;
+            this.kind = kind;
             this.dimensionId = dimensionId;
             this.minY = minY;
             this.maxY = maxY;
@@ -362,13 +644,17 @@ public final class WorldGenIndexer {
         }
 
         private OreEntry toEntry() {
-            // Present in every biome of the dimension, so the biome cycler would just be noise.
-            List<String> biomeList = biomes.size() >= dimensionBiomeCount
+            // Present in effectively every biome of the dimension, so the biome cycler would
+            // just be noise. The threshold matters: in a pack with hundreds of biomes, shipping
+            // "599 of 600" as a literal list costs a great deal and tells a player nothing.
+            int threshold = (int) Math.ceil(
+                    dimensionBiomeCount * (Config.BIOME_COVERAGE_THRESHOLD.get() / 100.0));
+            List<String> biomeList = biomes.size() >= Math.max(1, threshold)
                     ? List.of()
                     : List.copyOf(biomes);
 
             return new OreEntry(
-                    blockId, sourceId, SourceKind.FEATURE, dimensionId, biomeList,
+                    blockId, sourceId, kind, dimensionId, biomeList,
                     minY, maxY, meanY, worldMinY, worldMaxY,
                     sizeBlocks, spawnPermille, 1000, "", "", List.of());
         }

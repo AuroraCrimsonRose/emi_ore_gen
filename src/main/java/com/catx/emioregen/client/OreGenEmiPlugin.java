@@ -76,10 +76,24 @@ public class OreGenEmiPlugin implements EmiPlugin {
         registry.addCategory(BIOME_GEN_CATEGORY);
         registry.addCategory(DIMENSION_GEN_CATEGORY);
 
-        registerRegionPages(registry);
-        registerVeinPages(registry);
+        try {
+            registerRegionPages(registry);
+        } catch (Throwable t) {
+            EMIOreGeneration.LOGGER.error("Could not build region pages", t);
+        }
+        try {
+            registerVeinPages(registry);
+        } catch (Throwable t) {
+            EMIOreGeneration.LOGGER.error("Could not build vein pages", t);
+        }
 
-        Map<String, ClientOreCache.OrePage> pages = buildPages();
+        Map<String, ClientOreCache.OrePage> pages;
+        try {
+            pages = buildPages();
+        } catch (Throwable t) {
+            EMIOreGeneration.LOGGER.error("Could not build ore pages; the category will be empty", t);
+            return;
+        }
 
         int registered = 0;
         int barren = 0;
@@ -88,16 +102,21 @@ public class OreGenEmiPlugin implements EmiPlugin {
 
             // The leading slash marks the id as synthetic. Without it EMI looks the recipe up in
             // the recipe manager, fails to find it, and logs an error for every single page.
-            OreGenEmiRecipe recipe = new OreGenEmiRecipe(
-                    EMIOreGeneration.id("/ore_gen/" + sanitise(entry.getKey())), page);
+            try {
+                OreGenEmiRecipe recipe = new OreGenEmiRecipe(
+                        EMIOreGeneration.id("/ore_gen/" + sanitise(entry.getKey())), page);
 
-            if (recipe.getOutputs().isEmpty()) {
-                continue;
-            }
-            registry.addRecipe(recipe);
-            registered++;
-            if (page.byDimension().isEmpty()) {
-                barren++;
+                if (recipe.getOutputs().isEmpty()) {
+                    continue;
+                }
+                registry.addRecipe(recipe);
+                registered++;
+                if (page.byDimension().isEmpty()) {
+                    barren++;
+                }
+            } catch (Throwable t) {
+                // One unbuildable page is worth losing. The category is not.
+                EMIOreGeneration.LOGGER.warn("Skipping ore page for {}", entry.getKey(), t);
             }
         }
 

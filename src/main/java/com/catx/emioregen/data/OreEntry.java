@@ -46,6 +46,13 @@ public record OreEntry(
         List<String> dropIds
 ) {
 
+    /** Copy with biome detail dropped, used when the full index will not fit in one packet. */
+    public OreEntry withoutBiomes() {
+        return biomeIds.isEmpty() ? this : new OreEntry(blockId, sourceId, kind, dimensionId,
+                List.of(), minY, maxY, meanY, worldMinY, worldMaxY, sizeBlocks, spawnPermille,
+                sharePermille, veinName, indicatorBlockId, dropIds);
+    }
+
     /** Copy carrying resolved loot-table drops. Kept separate so extraction stays loot-agnostic. */
     public OreEntry withDrops(List<String> drops) {
         return new OreEntry(blockId, sourceId, kind, dimensionId, biomeIds, minY, maxY, meanY,
@@ -55,7 +62,9 @@ public record OreEntry(
 
     /** True when this entry describes a fluid reservoir rather than a solid ore. */
     public boolean isFluid() {
-        return kind == SourceKind.GT_BEDROCK_FLUID;
+        return kind == SourceKind.GT_BEDROCK_FLUID
+                || kind == SourceKind.IP_RESERVOIR
+                || kind == SourceKind.FLUID_DEPOSIT;
     }
 
     /**

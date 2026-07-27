@@ -31,7 +31,17 @@
   "emi.category.emioregeneration.dimension_gen": "Dimension Generation",
   "emioregeneration.ui.across_biomes": "Across %s biomes",
   "emi.category.emioregeneration.vein_gen": "Ore Veins",
-  "emioregeneration.ui.of_chunks": "%s of chunks",
   "emioregeneration.ui.marked_by_surface_rock": "Marked by surface rocks",
-  "emioregeneration.configuration.useOwnVeinDiagram": "Use Own Vein Diagram"
+  "emioregeneration.configuration.useOwnVeinDiagram": "Use Own Vein Diagram",
+  "emioregeneration.ui.reservoir": "Reservoir",
+  "emioregeneration.source.ip_reservoir": "Oil Reservoir",
+  "emioregeneration.configuration.includeImmersivePetroleum": "Index Immersive Petroleum",
+  "emioregeneration.ui.deposit": "Mineral deposit",
+  "emioregeneration.source.ie_mineral": "Mineral Deposit",
+  "emioregeneration.configuration.includeImmersiveEngineering": "Index Immersive Engineering",
+  "emioregeneration.configuration.biomeCoverageThreshold": "Biome Coverage Threshold",
+  "emioregeneration.source.fluid_deposit": "Fluid Deposit",
+  "emioregeneration.jade.more": "+%s more source(s)",
+  "config.jade.plugin_emioregeneration.ore_generation": "Ore Generation",
+  "emioregeneration.configuration.showInJade": "Show On Jade HUD"
 }

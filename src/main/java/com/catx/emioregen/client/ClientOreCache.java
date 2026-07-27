@@ -30,7 +30,13 @@ public final class ClientOreCache {
     public static void update(List<OreEntry> entries) {
         Map<String, Map<String, Map<String, List<OreEntry>>>> building = new LinkedHashMap<>();
 
+        int rejected = 0;
         for (OreEntry entry : entries) {
+            if (!isUsable(entry)) {
+                rejected++;
+                continue;
+            }
+
             Map<String, Map<String, List<OreEntry>>> byDimension =
                     building.computeIfAbsent(entry.blockId(), k -> new TreeMap<>());
 
@@ -41,7 +47,9 @@ public final class ClientOreCache {
                 byBiome.computeIfAbsent(ANY_BIOME, k -> new ArrayList<>()).add(entry);
             } else {
                 for (String biome : entry.biomeIds()) {
-                    byBiome.computeIfAbsent(biome, k -> new ArrayList<>()).add(entry);
+                    if (biome != null && !biome.isBlank()) {
+                        byBiome.computeIfAbsent(biome, k -> new ArrayList<>()).add(entry);
+                    }
                 }
             }
         }
@@ -54,6 +62,30 @@ public final class ClientOreCache {
         });
 
         pages = built;
+
+        if (rejected > 0) {
+            com.catx.emioregen.EMIOreGeneration.LOGGER.warn(
+                    "Discarded {} malformed ore entries", rejected);
+        }
+    }
+
+    /**
+     * Whether an entry is complete enough to display.
+     *
+     * <p>Records shipped as JSON can arrive with null fields if whatever produced them was
+     * misbehaving, and a null blockId would fail much later inside a render call, where the
+     * failure takes the screen with it rather than one row.</p>
+     */
+    private static boolean isUsable(OreEntry entry) {
+        return entry != null
+                && entry.blockId() != null && !entry.blockId().isBlank()
+                && entry.kind() != null
+                && entry.dimensionId() != null && !entry.dimensionId().isBlank()
+                && entry.biomeIds() != null
+                && entry.dropIds() != null
+                && entry.sourceId() != null
+                && entry.veinName() != null
+                && entry.indicatorBlockId() != null;
     }
 
     public static void clear() {
